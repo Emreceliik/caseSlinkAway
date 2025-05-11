@@ -39,6 +39,9 @@ public class weganController : MonoBehaviour
     [SerializeField] private Transform legsPoint;
     [SerializeField] private float sinkDuration = 0.5f;
     [SerializeField] private float scaleDuration = 0.3f;
+
+    [SerializeField] private float bendColliderThreshold = 0.2f;
+    [SerializeField] private float colliderShrinkFactor = 0.7f;
     #endregion
 
     #region Public Properties
@@ -65,6 +68,11 @@ public class weganController : MonoBehaviour
     private Collider currentSinkTrigger = null;
     private bool isReadyToSink = false;
     private bool isSinking = false;
+    private bool isExitingLine = false;
+    private Vector3 exitTargetOffset = new Vector3(0, -2f, 0);
+    private BoxCollider boxCollider;
+    private Vector3 originalColliderSize;
+    private Vector3 originalColliderCenter;
     #endregion
 
     #region Events
@@ -85,6 +93,17 @@ public class weganController : MonoBehaviour
         }
 
         FixInitialRotations();
+        InitializePartDeformers();
+    }
+
+    private void Awake()
+    {
+        boxCollider = GetComponent<BoxCollider>();
+        if (boxCollider != null)
+        {
+            originalColliderSize = boxCollider.size;
+            originalColliderCenter = boxCollider.center;
+        }
     }
 
     private void Update()
@@ -126,6 +145,27 @@ public class weganController : MonoBehaviour
         if (showDebugInfo)
         {
             VisualizeDebugInfo();
+        }
+
+        if (isExitingLine)
+        {
+            Vector3 headTarget = wagonHead.transform.position + exitTargetOffset;
+            wagonHead.transform.position = Vector3.Lerp(wagonHead.transform.position, headTarget, Time.deltaTime * 2f);
+
+            for (int i = 0; i < wagonBodyParts.Count; i++)
+            {
+                GameObject bodyPart = wagonBodyParts[i];
+                Vector3 targetPos = (i == 0) ? wagonHead.transform.position : wagonBodyParts[i - 1].transform.position;
+                bodyPart.transform.position = Vector3.Lerp(bodyPart.transform.position, targetPos, Time.deltaTime * 8f);
+
+                Vector3 directionForward = (targetPos - bodyPart.transform.position).normalized;
+                if (directionForward != Vector3.zero)
+                {
+                    float angle = Mathf.Atan2(directionForward.x, directionForward.z) * Mathf.Rad2Deg;
+                    Quaternion targetRotation = Quaternion.Euler(0f, angle, 0f);
+                    bodyPart.transform.rotation = targetRotation;
+                }
+            }
         }
     }
 
@@ -349,135 +389,68 @@ public class weganController : MonoBehaviour
     {
         if (wagonBodyParts.Count == 0) return;
 
-        while (positionHistory.Count <= wagonBodyParts.Count + 1)
-        {
-            Vector3 lastPosition = positionHistory[positionHistory.Count - 1];
-            Vector3 direction;
-
-            if (positionHistory.Count > 1)
-            {
-                direction = (positionHistory[positionHistory.Count - 2] - lastPosition).normalized;
-            }
-            else
-            {
-                direction = -currentMoveDirection;
-            }
-
-            Vector3 newPosition = lastPosition + direction * gridSize;
-            newPosition.x = Mathf.Round(newPosition.x / gridSize) * gridSize;
-            newPosition.z = Mathf.Round(newPosition.z / gridSize) * gridSize;
-            positionHistory.Add(newPosition);
-        }
-
+        // 1. Pozisyon zinciri: Her vagon bir öncekinin pozisyonunu takip eder (grid mantığı)
         for (int i = 0; i < wagonBodyParts.Count; i++)
         {
             if (i + 1 < positionHistory.Count)
             {
                 GameObject bodyPart = wagonBodyParts[i];
                 Vector3 targetPos = positionHistory[i + 1];
+                bodyPart.transform.position = targetPos;
 
-                targetPos.x = Mathf.Round(targetPos.x / gridSize) * gridSize;
-                targetPos.z = Mathf.Round(targetPos.z / gridSize) * gridSize;
-
-                if (isDragging)
-                {
-                    bodyPart.transform.position = Vector3.Lerp(
-                        bodyPart.transform.position,
-                        targetPos,
-                        Time.deltaTime * 10f
-                    );
-                }
-                else
-                {
-                    bodyPart.transform.position = targetPos;
-                }
-
+                // Rotasyon (yön) ayarı
                 Vector3 directionForward = Vector3.zero;
-                if (i == wagonBodyParts.Count - 1)
+                if (i + 2 < positionHistory.Count)
                 {
-                    if (i > 0)
-                    {
-                        directionForward = (positionHistory[i] - positionHistory[i + 1]).normalized;
-                        float angle = Mathf.Atan2(directionForward.x, directionForward.z) * Mathf.Rad2Deg;
-                        float initialAngle = lastPartInitialRotation.eulerAngles.y;
-                        float angleDifference = angle - initialAngle;
-                        Quaternion targetRotation = Quaternion.Euler(0f, initialAngle + angleDifference, 0f);
-
-                        if (isDragging)
-                        {
-                            bodyPart.transform.DOKill(false);
-                            bodyPart.transform.DORotateQuaternion(targetRotation, bodyRotateDuration).SetEase(Ease.OutQuad);
-                        }
-                        else
-                        {
-                            bodyPart.transform.rotation = targetRotation;
-                        }
-                    }
+                    directionForward = (positionHistory[i + 1] - positionHistory[i + 2]).normalized;
                 }
-                else
+                else if (i + 1 < positionHistory.Count)
                 {
-                    if (i + 2 < positionHistory.Count)
-                    {
-                        directionForward = (positionHistory[i + 1] - positionHistory[i + 2]).normalized;
-                    }
-                    else if (i + 1 < positionHistory.Count)
-                    {
-                        directionForward = (positionHistory[i] - positionHistory[i + 1]).normalized;
-                    }
-
-                    if (directionForward != Vector3.zero)
-                    {
-                        float angle = Mathf.Atan2(directionForward.x, directionForward.z) * Mathf.Rad2Deg;
-                        Quaternion targetRotation = Quaternion.Euler(0f, angle, 0f);
-
-                        if (isDragging)
-                        {
-                            bodyPart.transform.DOKill(false);
-                            bodyPart.transform.DORotateQuaternion(targetRotation, bodyRotateDuration).SetEase(Ease.OutQuad);
-                        }
-                        else
-                        {
-                            bodyPart.transform.rotation = targetRotation;
-                        }
-                    }
+                    directionForward = (positionHistory[i] - positionHistory[i + 1]).normalized;
                 }
 
-                CheckCornerRotation(i);
+                if (directionForward != Vector3.zero)
+                {
+                    float angle = Mathf.Atan2(directionForward.x, directionForward.z) * Mathf.Rad2Deg;
+                    Quaternion targetRotation = Quaternion.Euler(0f, angle, 0f);
+                    bodyPart.transform.rotation = targetRotation;
+                }
             }
         }
 
-        if (!isDragging)
+        // 2. Köşe kontrolü: Sadece gerçek köşe noktasında köşe mesh aktif
+        for (int i = 0; i < wagonBodyParts.Count; i++)
         {
-            for (int i = 0; i < wagonBodyParts.Count; i++)
-            {
-                if (i + 1 < positionHistory.Count)
-                {
-                    Vector3 targetPos = positionHistory[i + 1];
-                    targetPos.x = Mathf.Round(targetPos.x / gridSize) * gridSize;
-                    targetPos.z = Mathf.Round(targetPos.z / gridSize) * gridSize;
-                    wagonBodyParts[i].transform.position = targetPos;
+            GameObject bodyPart = wagonBodyParts[i];
 
-                    if (i == wagonBodyParts.Count - 1)
-                    {
-                        Vector3 directionForward = (positionHistory[i] - positionHistory[i + 1]).normalized;
-                        float angle = Mathf.Atan2(directionForward.x, directionForward.z) * Mathf.Rad2Deg;
-                        float initialAngle = lastPartInitialRotation.eulerAngles.y;
-                        float angleDifference = angle - initialAngle;
-                        Quaternion targetRotation = Quaternion.Euler(0f, initialAngle + angleDifference, 0f);
-                        wagonBodyParts[i].transform.rotation = targetRotation;
-                    }
-                    else
-                    {
-                        float currentY = wagonBodyParts[i].transform.rotation.eulerAngles.y;
-                        float roundedY = Mathf.Round(currentY / 90f) * 90f;
-                        Quaternion targetRotation = Quaternion.Euler(0, roundedY, 0);
-                        wagonBodyParts[i].transform.rotation = targetRotation;
-                    }
-                }
-            }
+            // Önceki vagonun pozisyonu
+            Vector3 prevPos = (i == 0) ? wagonHead.transform.position : wagonBodyParts[i - 1].transform.position;
+            // Kendi pozisyonu
+            Vector3 thisPos = bodyPart.transform.position;
+            // Sonraki vagonun pozisyonu (varsa)
+            Vector3 nextPos = (i < wagonBodyParts.Count - 1) ? wagonBodyParts[i + 1].transform.position : thisPos;
+
+            // Kendi yönü (önceki vagona göre)
+            Vector3 fromDir = (thisPos - prevPos).normalized;
+            // Sonraki yön (sonraki vagona göre)
+            Vector3 toDir = (nextPos - thisPos).normalized;
+
+            // Grid yönlerine yuvarla
+            Vector3Int from = new Vector3Int(Mathf.RoundToInt(fromDir.x), 0, Mathf.RoundToInt(fromDir.z));
+            Vector3Int to = new Vector3Int(Mathf.RoundToInt(toDir.x), 0, Mathf.RoundToInt(toDir.z));
+
+            // Sıfır vektör kontrolü
+            bool valid = from.sqrMagnitude > 0 && to.sqrMagnitude > 0;
+
+            // Yönler farklıysa köşe
+            bool isCorner = valid && from != to;
+
+            var deformer = bodyPart.GetComponent<WagonPartDeformer>();
+            if (deformer != null)
+                deformer.SetCornerState(isCorner, from, to);
         }
     }
-
+    
     private void CheckCornerRotation(int bodyIndex)
     {
         if (cornerInfos.Count <= 0)
@@ -632,6 +605,27 @@ public class weganController : MonoBehaviour
             Debug.DrawLine(positionHistory[i], positionHistory[i + 1], Color.magenta);
         }
     }
+
+    private void InitializePartDeformers()
+    {
+        WagonPartDeformer headDeformer = wagonHead.GetComponent<WagonPartDeformer>();
+        if (headDeformer == null)
+        {
+            headDeformer = wagonHead.AddComponent<WagonPartDeformer>();
+        }
+
+        WagonPartDeformer previousDeformer = headDeformer;
+        foreach (GameObject bodyPart in wagonBodyParts)
+        {
+            WagonPartDeformer currentDeformer = bodyPart.GetComponent<WagonPartDeformer>();
+            if (currentDeformer == null)
+            {
+                currentDeformer = bodyPart.AddComponent<WagonPartDeformer>();
+            }
+            // currentDeformer.SetPreviousPart(previousDeformer);
+            previousDeformer = currentDeformer;
+        }
+    }
     #endregion
 
     #region Public Methods
@@ -666,6 +660,23 @@ public class weganController : MonoBehaviour
 
         wagonBodyParts.Add(newBodyPart);
         positionHistory.Add(referencePosition);
+
+        WagonPartDeformer newDeformer = newBodyPart.GetComponent<WagonPartDeformer>();
+        if (newDeformer == null)
+        {
+            newDeformer = newBodyPart.AddComponent<WagonPartDeformer>();
+        }
+
+        if (wagonBodyParts.Count > 1)
+        {
+            WagonPartDeformer previousDeformer = wagonBodyParts[wagonBodyParts.Count - 2].GetComponent<WagonPartDeformer>();
+            // newDeformer.SetPreviousPart(previousDeformer);
+        }
+        else
+        {
+            WagonPartDeformer headDeformer = wagonHead.GetComponent<WagonPartDeformer>();
+            // newDeformer.SetPreviousPart(headDeformer);
+        }
     }
 
     public void SinkCharacterIntoWegan(GameObject character)
@@ -678,6 +689,13 @@ public class weganController : MonoBehaviour
         isSinking = true;
         StartCoroutine(SinkWagenAnimation(wagen));
     }
+
+    public void StartExitLineSequence()
+    {
+        isExitingLine = true;
+    }
+
+    
     #endregion
 
     #region Coroutines
@@ -720,63 +738,46 @@ public class weganController : MonoBehaviour
 
     private IEnumerator SinkWagenAnimation(Transform wagen)
     {
-        Vector3 targetPosition = wagonHead.transform.position;
-        Quaternion targetRotation = wagonHead.transform.rotation;
+        float fallDistance = 3f;
+        float fallDuration = 2.0f;
+        int segmentCount = wagonBodyParts.Count + 1;
+        float segmentDelay = 0.12f;
 
-        Sequence headSequence = DOTween.Sequence();
-        headSequence.Append(wagonHead.transform.DOScale(new Vector3(scaleDownAmount, scaleDownAmount, scaleDownAmount), headSinkDuration).SetEase(Ease.OutQuad))
-                   .Join(wagonHead.transform.DOMoveY(targetPosition.y - sinkDistance, headSinkDuration).SetEase(Ease.InQuad))
-                   .Join(wagonHead.transform.DORotate(new Vector3(0, 180, 0), headSinkDuration).SetEase(Ease.InQuad))
-                   .Append(wagonHead.transform.DOScale(Vector3.zero, headDisappearDuration).SetEase(Ease.InQuad))
-                   .Join(wagonHead.transform.DOMoveY(targetPosition.y - disappearDistance, headDisappearDuration).SetEase(Ease.InQuad));
+        List<Vector3> positionQueue = new List<Vector3>();
+        Vector3 headStart = wagonHead.transform.position;
+        Vector3 headTarget = headStart + Vector3.down * fallDistance;
 
-        Vector3 finalPosition = new Vector3(targetPosition.x, targetPosition.y - disappearDistance, targetPosition.z);
+        for (int i = 0; i < segmentCount * 10; i++)
+            positionQueue.Add(headStart);
 
-        headSequence.Play();
-        yield return headSequence.WaitForCompletion();
+        float t = 0f;
+        while (t < 1f)
+        {
+            t += Time.deltaTime / fallDuration;
+            Vector3 newHeadPos = Vector3.Lerp(headStart, headTarget, t);
+            positionQueue.Insert(0, newHeadPos);
+            if (positionQueue.Count > segmentCount * 10)
+                positionQueue.RemoveAt(positionQueue.Count - 1);
 
+            wagonHead.transform.position = newHeadPos;
+
+            for (int i = 0; i < wagonBodyParts.Count; i++)
+            {
+                int queueIndex = Mathf.Min((i + 1) * Mathf.RoundToInt(segmentDelay / Time.deltaTime), positionQueue.Count - 1);
+                Vector3 targetPos = positionQueue[queueIndex];
+                wagonBodyParts[i].transform.position = Vector3.Lerp(wagonBodyParts[i].transform.position, targetPos, Time.deltaTime * 10f);
+            }
+
+            yield return null;
+        }
+
+        wagonHead.transform.position = headTarget;
         for (int i = 0; i < wagonBodyParts.Count; i++)
         {
-            GameObject bodyPart = wagonBodyParts[i];
-            Vector3 nextPosition = (i == 0) ? targetPosition : wagonBodyParts[i - 1].transform.position;
-
-            Sequence moveSequence = DOTween.Sequence();
-            moveSequence.Append(bodyPart.transform.DOMove(nextPosition, bodyMoveDuration).SetEase(Ease.InOutCubic))
-                       .Join(bodyPart.transform.DORotate(targetRotation.eulerAngles, bodyMoveDuration).SetEase(Ease.InOutCubic))
-                       .Join(bodyPart.transform.DOScale(new Vector3(scaleUpAmount, scaleUpAmount, scaleUpAmount), bodyScaleDuration).SetEase(Ease.OutQuad))
-                       .Append(bodyPart.transform.DOScale(Vector3.one, bodyScaleDuration).SetEase(Ease.InQuad));
-
-            yield return moveSequence.WaitForCompletion();
+            int queueIndex = Mathf.Min((i + 1) * Mathf.RoundToInt(segmentDelay / Time.deltaTime), positionQueue.Count - 1);
+            Vector3 targetPos = positionQueue[queueIndex];
+            wagonBodyParts[i].transform.position = targetPos;
         }
-
-        yield return new WaitForSeconds(bodyWaitDuration);
-
-        List<Sequence> disappearSequences = new List<Sequence>();
-        for (int i = 0; i < wagonBodyParts.Count; i++)
-        {
-            GameObject bodyPart = wagonBodyParts[i];
-
-            Sequence disappearSequence = DOTween.Sequence();
-            disappearSequence.Append(bodyPart.transform.DOScale(new Vector3(scaleDownAmount, scaleDownAmount, scaleDownAmount), bodySinkDuration).SetEase(Ease.OutQuad))
-                           .Join(bodyPart.transform.DOMoveY(finalPosition.y, bodySinkDuration).SetEase(Ease.InQuad))
-                           .Join(bodyPart.transform.DORotate(new Vector3(0, 180, 0), bodySinkDuration).SetEase(Ease.InQuad))
-                           .Append(bodyPart.transform.DOScale(Vector3.zero, bodyDisappearDuration).SetEase(Ease.InQuad))
-                           .Join(bodyPart.transform.DOMove(finalPosition, bodyDisappearDuration).SetEase(Ease.InQuad));
-
-            disappearSequences.Add(disappearSequence);
-        }
-
-        foreach (var sequence in disappearSequences)
-        {
-            sequence.Play();
-        }
-
-        foreach (var sequence in disappearSequences)
-        {
-            yield return sequence.WaitForCompletion();
-        }
-
-        OnWagonSinkComplete?.Invoke();
 
         Destroy(wagen.gameObject);
     }
