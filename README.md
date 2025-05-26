@@ -1,4 +1,4 @@
 # caseSlinkAway
 <p align="center">
-  <img src="https://github.com/Emreceliik/QuranLineSeperater/blob/main/quran.png" alt="Project Image" />
+  <img src="https://github.com/Emreceliik/caseSlinkAway/blob/main/caseSlinkAway.png" alt="Project Image" />
 </p>
